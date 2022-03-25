@@ -1,4 +1,4 @@
-# ourcelium                                                                                                                            
+# hyphae                                                                                                                            
                                                                                                                                        
 A tangle of audio threads sampled from a live playing group, distributed across a multi way sound system. Script in supercollider      
                                                                                                                                        

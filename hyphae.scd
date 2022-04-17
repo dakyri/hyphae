@@ -13,12 +13,12 @@ s.waitForBoot({
 	}).add;
 
 	// record synth, mono->0
-	SynthDef(\rec, {
-		var liveSig, loopSig, sig, ptr;
-		ptr = In.ar(\inPtr.ir(0), 1);
+	// pointer reset by t_start, running started by \run set to 0
+	SynthDef(\rec, { | t_start=1, run=0 |
+		var sig, rec_len;
+		rec_len = Sweep.ar(t_start, SampleRate.ir * run);
 		sig = In.ar(\inBus.ir(0), 1);
-		sig = sig * \amp.kr(1).varlag(\ampLag.kr(5),-2);
-		BufWr.ar(sig, \buf.kr(0), ptr);
+		BufWr.ar(sig, \buf.kr(0), rec_len-1);
 	}).add;
 
 	// reverb synth, mono->mono
@@ -54,21 +54,18 @@ s.waitForBoot({
  */
 	s.sync;
 	s.newBusAllocators;
-	~trigBus = Bus.audio(s,1);
-	~sweepBus = Bus.audio(s,1);
-	~ptrBus = Bus.audio(s,1);
-	~micBus = Bus.audio(s,1);
-	~micDirectBus = Bus.audio(s,1);
-	~loopBus = Bus.audio(s,1);
-	~mainOut = 0;
+	~recSweepBus = Bus.audio(s,1); // ?? output for record sweep to track length
+	~micBus = Bus.audio(s,1); // actually one for each line in
+	~strandOutBus = Bus.audio(s, 4); // collective output for processed sound
+	~directOutBus = Bus.audio(s, 4); // collective output for direct line
+	~mainOut = 0; // audio out, 4 channel. need 3 groups. [0..3], [2..5], and [4..7]
 
-	~inGrp = Group.new;
-	~trigGrp = Group.after(~inGrp);
-	~sweepGrp = Group.after(~trigGrp);
-	~ptrGrp = Group.after(~sweepGrp);
-	~playGrp = Group.after(~ptrGrp);
-	~recGrp = Group.after(~playGrp);
-	~mixerGrp = Group.after(~recGrp);
+	~inputGrp = Group.new; // group for line inputs
+	~trigGrp = Group.after(~inputGrp); // group for any trigger traffic
+	~playGrp = Group.after(~trigGrp); // group for direct and strand players
+	~recGrp = Group.after(~playGrp); // group for recording line in
+	~masterFXGrp = Group.after(~recGrp); // group for any master fx
+	~masterOutGrp = Group.after(~masterFXGrp); // group for main hardware io
 
 /*!
  * Mycellium
@@ -80,67 +77,49 @@ s.waitForBoot({
 		type: \composite,
 		play: { |self| },
 		new: { |self, c_x=0, c_y=0, i_bus=0, o_bus=0, v_in=3|
-			self.postln; c_x.postln; c_y.postln; i_bus.postln; o_bus.postln;
-			v_in.postln;
 			(
 				type: \composite,
-				center_x: c_x,
-				center_y: c_y,
-				in_bus: i_bus,
-				out_bus: o_bus,
-				poop: { |self, x|
+				center_x: c_x, // center x of this performer
+				center_y: c_y, // center y of this performer
+				in_bus: i_bus, // mono linein bus
+				out_bus: o_bus, // quad lineout bus
+				linein_syn: nil,
+				play_syn: nil,
+				record_syn: nil,
+				osc_rec_trig: nil,
+
+				/*!
+				 * just a test stub
+				 */
+				test_mv: { |self, x|
 					self.center_x = self.center_x + 1;
 					self.out_bus.postln;
+				},
+				/*!
+				 * clean up any existing stuff and launch our main working synths
+				 */
+				start: { |self|
+					if (self.linein_syn != nil, { self.linein_syn.free; });
+					if (self.play_syn != nil, { self.play_syn.free; });
+					if (self.record_syn != nil, { self.record_syn.free; });
+					if (self.osc_rec_trig != nil, { self.osc_rec_trig.free; });
+
+					self.linein_syn = Synth(\input);
+					self.play_syn = Synth(\play);
+					self.record_syn = Synth(\rec);
+					self.osc_rec_trig = OSCFunc({|msg, time|
+						[time, msg].postln;
+					},'/tr', argTemplate: [{|x| x == self.linein_syn.nodeID; },
+						{|x| x.postln; true; },
+						{|x| x.postln; true; }]);
 				}
+
 			)
 		}
 	)
 
 
-/*
-	SynthDef(\trig, {
-		var sig;
-		sig = Trig1.ar(\trig.tr(0), ControlDur.ir);
-		Out.ar(\out.ir(0), sig);
-	}).add;
-
-	SynthDef(\sweep, {
-		var sig, trigSig;
-		trigSig = In.ar(\inTrig.ir(0), 1);
-		sig = Sweep.ar(\trig.tr(0) + trigSig, SampleRate.ir * \run.kr(1));
-		Out.ar(\out.ir(0), sig);
-	}).add;
-
-	SynthDef(\ptr, {
-		var sig, max, trigSig;
-		trigSig = In.ar(\inTrig.ir(0), 1);
-		max = In.ar(\inMax.ir(0), 1);
-		sig = Phasor.ar(\trig.tr(0) + trigSig, 1, 0, max, 0);
-		Out.ar(\out.ir(0), sig);
-	}).add;
-
-	SynthDef(\play, {
-		var sig, ptr;
-		ptr = In.ar(\inPtr.ir(0), 1);
-		sig = BufRd.ar(1,\buf.kr(0),ptr);
-		sig = sig * \amp.kr(1).varlag(\ampLag.kr(5),-2);
-		Out.ar(\out.ir(0), sig);
-	}).add;
-
-	SynthDef(\mixer, {
-		var loop, direct, sig;
-		loop = In.ar(\inLoop.ir(0), 1);
-		direct = In.ar(\inDirect.ir(0), 1);
-		sig = sum([
-			loop * \loopAmp.kr(1).varlag(\ampLag.kr(5),-2),
-			direct * \directAmp.kr(1).varlag(\ampLag.kr(5),-2)
-		]);
-		sig = sig * \amp.kr(1).varlag(\ampLag.kr(5),-2);
-		Out.ar(\out.ir(0), direct!2);
-	}).add;
-*/
-
-//	~b = Buffer.alloc(s, s.sampleRate * 300);
+	~b = Buffer.alloc(s, s.sampleRate * 300);
 
 	s.sync;
 
@@ -156,67 +135,35 @@ s.waitForBoot({
 
 });
 )
+
 s.reboot
 s.scope
 s.meter
 s.plotTree
 s.stop
 s.freeAll
-{ PinkNoise.ar(0.2) + SinOsc.ar(440, 0, 0.2) + Saw.ar(660, 0.2) }.plot;
-ServerOptions.devices
-~linein_syn.set(\outBus, 3)
+(
+	~b = Buffer.alloc(s, s.sampleRate * 10);
+	SynthDef(\rec, { | t_start=1, run=0 |
+		var sig, rec_len;
+		rec_len = Sweep.ar(t_start, SampleRate.ir * run);
+		sig = SoundIn.ar(0, 1);
+	    sig.poll;
+		BufWr.ar(sig, \buf.kr(0), rec_len);
+	    rec_len.poll;
+		Out.ar(0, sig);
 
-s.boot
-(
-o = OSCFunc({ arg msg, time;
-    [time, msg].postln;
-},'/tr', s.addr, argTemplate: [{|x| x.postln; true; }, {|x| x.postln; true; }, {|x| x.postln; true; }]);
+	}).add;
 )
-// [ 1020.053671147, [ /tr, 1005, 0, 0.89999997615814 ] ]
-(
-SynthDef("help-SendTrig",{SendTrig.kr(Dust.kr(1.0),0,0.9);}).add;
-)
-(
-(
-SynthDef("coyote", {  var sounds = Mix.fill(3, { var trig = Dust.kr(1);
-                                                 Saw.ar(TRand.kr(50, 880, trig),
-                                                        Decay.kr(trig,
-                                                                 TRand.kr(0.1, 2, trig),
-                                                                 3.reciprocal)); } );
-
-// var detect = PinkNoise.ar(Decay.kr(Coyote.kr(sounds,    fastMul: 0.6,  thresh: 0.001), 0.2));
-var sig = Coyote.kr(sounds, fastMul: 0.6, thresh: 0.001);
-SendTrig.kr(sig, 0, sig);
-                      Out.ar(0, sounds); } ).send(s);
-).add
-)
-x = Synth.new("coyote")
-x.free
-y = Synth("help-SendTrig");
-y.free
-true
-
-sum([1, 2, 3, 4, 5])
-~linein_syn.play
 s.reboot
-//initial start record
-~looper.set(\trig, 1, \run, 1, \reclev, 1, \prelev, 1, \xfade, 0.02);
-
-//stop recording/overdubbing, begin/continue looping
-~looper.set(\run, 0, \reclev, 0, \prelev, 1);
-
-//start overdubbing (slight attenuation on existing content to prevent buildup)
-~looper.set(\run, 0, \reclev, 1, \prelev, -1.dbamp);
-
-//gradually fade loop content on each loop, without recording new audio
-~looper.set(\run, 0, \reclev, 0, \prelev, -3.dbamp);
-
-//reset, clear buffer, and immediately begin recording again
-~b.zero; ~looper.set(\trig, 1, \run, 1, \reclev, 1, \prelev, 1, \xfade, 0.02);
-
-//reset, clear buffer, but do not begin recording again
-~b.zero; ~looper.set(\trig, 1, \run, 0, \reclev, 0, \prelev, 0, \xfade, 0.02);
-
-//fade loop signal out of/into main mix
-~looper.set(\loopAmp, 0, \xfade, 3);
-~looper.set(\loopAmp, 1, \xfade, 3);
+a = Synth(\rec)
+a.set(\buf, ~b.bufnum)
+a.set(\run, 1)
+a.set(\run, 0)
+a.set(\t_start, 1)
+~b.plot
+~b.bufnum
+s.boot
+s.freeAll
+~b.play
+a.free

@@ -4,21 +4,25 @@ s.waitForBoot({
 	Buffer.freeAll;
 	s.sync;
 
+	~onsetTrigId = 1;
+	~fallTrigId = 2;
+
 	// input synth, mono->mono
 	SynthDef(\input, {
 		var sig;
 		sig = SoundIn.ar(\inBus.ir(0)) * \amp.kr(1);
-		SendTrig.kr(Coyote.kr(sig, fastMul: 0.6, thresh: 0.001), \trigId.ir(0), sig);
+		SendTrig.kr(
+			Coyote.kr(sig, fastMul: 0.6, thresh: 0.001), \onsetTrigId.ir(~onsetTrigId), sig);
 		Out.ar(\outBus.ir(0), sig);
 	}).add;
 
 	// record synth, mono->0
 	// pointer reset by t_start, running started by \run set to 0
-	SynthDef(\rec, { | t_start=1, run=0 |
+	SynthDef(\rec, { | t_reset=1, run=0 |
 		var sig, rec_len;
-		rec_len = Sweep.ar(t_start, SampleRate.ir * run);
+		rec_len = Sweep.ar(t_reset, SampleRate.ir * run);
 		sig = In.ar(\inBus.ir(0), 1);
-		BufWr.ar(sig, \buf.kr(0), rec_len-1);
+		BufWr.ar(sig, \buf.kr(0), rec_len-1, loop: 0);
 	}).add;
 
 	// reverb synth, mono->mono
@@ -55,7 +59,6 @@ s.waitForBoot({
 	s.sync;
 	s.newBusAllocators;
 	~recSweepBus = Bus.audio(s,1); // ?? output for record sweep to track length
-	~micBus = Bus.audio(s,1); // actually one for each line in
 	~strandOutBus = Bus.audio(s, 4); // collective output for processed sound
 	~directOutBus = Bus.audio(s, 4); // collective output for direct line
 	~mainOut = 0; // audio out, 4 channel. need 3 groups. [0..3], [2..5], and [4..7]
@@ -77,12 +80,14 @@ s.waitForBoot({
 		type: \composite,
 		play: { |self| },
 		new: { |self, c_x=0, c_y=0, i_bus=0, o_bus=0, v_in=3|
+			var mb = Bus.audio(s,1);
 			(
 				type: \composite,
 				center_x: c_x, // center x of this performer
 				center_y: c_y, // center y of this performer
-				in_bus: i_bus, // mono linein bus
-				out_bus: o_bus, // quad lineout bus
+				in_bus: i_bus, // mono linein hardware bus
+				out_bus: o_bus, // quad lineout hardware bus
+				linein_bus: Bus.audio(s, 1), // mono bus from input -> direct out and recorder
 				linein_syn: nil,
 				play_syn: nil,
 				record_syn: nil,
@@ -104,34 +109,74 @@ s.waitForBoot({
 					if (self.record_syn != nil, { self.record_syn.free; });
 					if (self.osc_rec_trig != nil, { self.osc_rec_trig.free; });
 
-					self.linein_syn = Synth(\input);
-					self.play_syn = Synth(\play);
-					self.record_syn = Synth(\rec);
+					self.linein_syn = Synth(
+						\input, [
+							\inBus, 1,
+							\amp, 1,
+							\onsetTrigId, 1,
+							\outBus, self.linein_bus,
+						], ~inputGrp
+					);
+					self.play_syn = Synth(
+						\play, [
+							\inBus, self.linein_bus,
+							\amp, 1,
+							\outBus, 1,
+							\x, self.center_x,
+							\y, self.center_y
+						], ~playGrp
+					);
+					self.record_syn = Synth(
+						\rec, [
+							\inBus, self.linein_bus,
+							\buf, 0,
+							\t_reset, 1,
+							\run, 0,
+						], ~recGrp
+					);
 					self.osc_rec_trig = OSCFunc({|msg, time|
 						[time, msg].postln;
-					},'/tr', argTemplate: [{|x| x == self.linein_syn.nodeID; },
+					},'/tr', argTemplate: [
+						{|x| x == self.linein_syn.nodeID; },
 						{|x| x.postln; true; },
 						{|x| x.postln; true; }]);
-				}
-
+				},
+				startRec: { |self|
+					if (self.record_syn != nil, {
+						self.record_syn.set(\t_reset, 1, \run, 1);
+					});
+				},
+				stopRec: { |self|
+					if (self.record_syn != nil, {
+						self.record_syn.set(\run, 0);
+					});
+				},
+				setInputLevel: { |self, level|
+					if (self.linein_syn != nil, {
+						self.linein_syn.set(\amp, level);
+					});
+				},
+				setDirectLevel: { |self, level|
+					if (self.play_syn != nil, {
+						self.play_syn.set(\amp, level);
+					});
+				},
+				/* this should be at an overall mix level */
+				setStrandLevel: { |self, level|
+					if (self.play_syn != nil, {
+						self.play_syn.set(\amp, level);
+					});
+				},
+				setCenterPos: { |self, x, y|
+					self.center_x = x;
+					self.center_y = y;
+					if (self.play_syn != nil, {
+						self.play_syn.set(\x, x, \y, y);
+					});
+				},
 			)
 		}
 	)
-
-
-	~b = Buffer.alloc(s, s.sampleRate * 300);
-
-	s.sync;
-
-	~my_inport = 0; // a mono port id
-	~my_outport = 0; // 1st line of a quad set
-	~linein_syn = Synth(
-		\input, [
-			\inBus, ~my_inport,
-			\outBus, ~micBus,
-			\amp, 1
-		], ~inGrp
-	);
 
 });
 )

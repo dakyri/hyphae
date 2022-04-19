@@ -94,6 +94,16 @@ s.waitForBoot({
 				osc_rec_trig: nil,
 
 				/*!
+				 * clean stuff up.
+				 */
+				free: { |self|
+					if (self.linein_syn != nil, { self.linein_syn.free; });
+					if (self.play_syn != nil, { self.play_syn.free; });
+					if (self.record_syn != nil, { self.record_syn.free; });
+					if (self.osc_rec_trig != nil, { self.osc_rec_trig.free; });
+				},
+
+				/*!
 				 * just a test stub
 				 */
 				test_mv: { |self, x|
@@ -176,10 +186,35 @@ s.waitForBoot({
 				},
 			)
 		}
-	)
+	);
+
+	/*
+	 * OSC rescponders.
+	 * the 1st param to correspond to a particular player, from 0..2
+	 */
+	OSCdef(\xy, {|msg, time, addr, recvPort|
+						[time, addr, recvPort, msg].postln;
+					},'/xy')
+	OSCdef(\in_lvl, {|msg, time, addr, recvPort|
+						[time, addr, recvPort, msg].postln;
+					},'/in_lvl')
+	OSCdef(\out_lvl, {|msg, time, addr, recvPort|
+						[time, addr, recvPort, msg].postln;
+					},'/out_lvl')
+	OSCdef(\str_lvl, {|msg, time, addr, recvPort|
+						[time, addr, recvPort, msg].postln;
+					},'/str_lvl')
+	OSCdef(\rec, {|msg, time, addr, recvPort|
+						[time, addr, recvPort, msg].postln;
+					},'/rec')
+	OSCdef(\stop, {|msg, time, addr, recvPort|
+						[time, addr, recvPort, msg].postln;
+					},'/stop')
 
 });
 )
+
+(
 
 s.reboot
 s.scope

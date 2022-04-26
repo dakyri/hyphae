@@ -37,6 +37,7 @@ s.waitForBoot({
 	}).add;
 
 	// play the thru signal spatialized, mono->quad
+	// maybe some curve on the lag would be nice
 	SynthDef(\play, {
 		var sig;
 		var t = \stepT.kr(0.01)
@@ -44,12 +45,16 @@ s.waitForBoot({
 		Out.ar(\outBus.ir(0), Pan4.ar(sig, \x.kr(0).varlag(t), \y.kr(0).varlag(t)))
 	}).add;
 
-	// play the thru signal spatialized, mono->quad
-	// maybe some curve on the lag would be nice
-	SynthDef(\strand, {
+	// play the strand signal from the buffer spatialized, none->quad
+	// buf reader won't loop. it will be triggered to reset from the controller
+	// for the moment, we'll keep things running forward with no pitch shift
+	// and generate variety by breaking up and running in different time scales
+	SynthDef(\strand, { | run=0, start, end|
 		var sig;
 		var t = \stepT.kr(0.01)
-		sig = In.ar(\inBus.ir(0)) * \amp.kr(1);
+		var phase = Sweep.ar(\t_start.kr, SampleRate.ir * run).linlin(0, 1, start, end, \minmax);
+		sig = BufRd.ar(1, \buf.kr(0), phase);
+		sig = sig * \amp.kr(1);
 		Out.ar(\outBus.ir(0), Pan4.ar(sig, \x.kr(0).varlag(t), \y.kr(0).varlag(t)))
 	}).add;
 
@@ -70,7 +75,36 @@ s.waitForBoot({
 	~masterFXGrp = Group.after(~recGrp); // group for any master fx
 	~masterOutGrp = Group.after(~masterFXGrp); // group for main hardware io
 
-/*!
+/**
+ * Hypha
+ * Holds data and functionals for a single strand of sound which will be looped
+ * and moved along a given path.
+ */
+	~hypha = (
+		type: \composite,
+		play: { |self| },
+		new: { |self|
+			(
+				type: \composite,
+				cur_ind: 0,
+				start_pos: 0,
+				end_pos: 0,
+				hi_freq: 0,
+				lo_freq: 0,
+				level: 0,
+				path: [], // list of space-time tuples (arrays of x, y, t)
+				strand_syn: nil, // the player of this little fandango
+
+				/**
+				 *  @return: a shifted copy of self from a
+				 */
+				branch: { |self, branch_ind|
+				}
+			)
+		}
+	);
+
+/**
  * Mycellium
  * The main wrapper around definitions and codes to map an input onto a recorder,
  * a 2d panned output, and a collection of 'strands' which will be dynamically
@@ -80,7 +114,6 @@ s.waitForBoot({
 		type: \composite,
 		play: { |self| },
 		new: { |self, c_x=0, c_y=0, i_bus=0, o_bus=0, v_in=3|
-			var mb = Bus.audio(s,1);
 			(
 				type: \composite,
 				center_x: c_x, // center x of this performer
@@ -93,7 +126,7 @@ s.waitForBoot({
 				record_syn: nil,
 				osc_rec_trig: nil,
 
-				/*!
+				/**
 				 * clean stuff up.
 				 */
 				free: { |self|
@@ -110,7 +143,7 @@ s.waitForBoot({
 					self.center_x = self.center_x + 1;
 					self.out_bus.postln;
 				},
-				/*!
+				/**
 				 * clean up any existing stuff and launch our main working synths
 				 */
 				start: { |self|
@@ -193,23 +226,35 @@ s.waitForBoot({
 	 * the 1st param to correspond to a particular player, from 0..2
 	 */
 	OSCdef(\xy, {|msg, time, addr, recvPort|
-						[time, addr, recvPort, msg].postln;
-					},'/xy')
+		var tgt = msg[1];
+		if (tgt >= 0 && tgt <= 2, {
+		});
+	},'/xy');
 	OSCdef(\in_lvl, {|msg, time, addr, recvPort|
-						[time, addr, recvPort, msg].postln;
-					},'/in_lvl')
+		var tgt = msg[1];
+		if (tgt >= 0 && tgt <= 2, {
+		});
+	},'/in_lvl');
 	OSCdef(\out_lvl, {|msg, time, addr, recvPort|
-						[time, addr, recvPort, msg].postln;
-					},'/out_lvl')
+		var tgt = msg[1];
+		if (tgt >= 0 && tgt <= 2, {
+		});
+	},'/out_lvl');
 	OSCdef(\str_lvl, {|msg, time, addr, recvPort|
-						[time, addr, recvPort, msg].postln;
-					},'/str_lvl')
+		var tgt = msg[1];
+		if (tgt >= 0 && tgt <= 2, {
+		});
+	},'/str_lvl');
 	OSCdef(\rec, {|msg, time, addr, recvPort|
-						[time, addr, recvPort, msg].postln;
-					},'/rec')
+		var tgt = msg[1];
+		if (tgt >= 0 && tgt <= 2, {
+		});
+	},'/rec');
 	OSCdef(\stop, {|msg, time, addr, recvPort|
-						[time, addr, recvPort, msg].postln;
-					},'/stop')
+		var tgt = msg[1];
+		if (tgt >= 0 && tgt <= 2, {
+		});
+	},'/stop');
 
 });
 )
@@ -247,3 +292,5 @@ s.boot
 s.freeAll
 ~b.play
 a.free
+
+a = [1, 2, 3]

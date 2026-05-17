@@ -4,10 +4,13 @@ s.waitForBoot({
 	Buffer.freeAll;
 	s.sync;
 
-	~onsetTrigId = 1;
-	~fallTrigId = 2;
+	~onsetTrigId = 1;  // default trigger id for an attack event
+	~fallTrigId = 2;   // default trigger id for a fall event .. whatever that is
 
 	// input synth, mono->mono
+	//  \inBus - source buss
+	//  \amp - input gain
+	//  \onsetTrigId - trigger id used for an onset event
 	SynthDef(\input, {
 		var sig;
 		sig = SoundIn.ar(\inBus.ir(0)) * \amp.kr(1);
@@ -28,10 +31,9 @@ s.waitForBoot({
 	// reverb synth, mono->mono
 	// maybe better to add to main out nodes directly
 	SynthDef.new(\rev, {
-		arg in=0, wetamp=0.3, out=0;
 		var sig, wet;
 		sig = In.ar(\inBus.ir(0));
-		wet = FreeVerb.ar(sig, mix: 1.0, room: 1.0, damp: 0.85, mul: wetamp);
+		wet = FreeVerb.ar(sig, mix: 1.0, room: 1.0, damp: 0.85, mul: \wetAmp.ir(0.3));
 		sig = sig + wet;
 		Out.ar(\outBus.ir(0), sig);
 	}).add;
@@ -64,9 +66,8 @@ s.waitForBoot({
 	s.sync;
 	s.newBusAllocators;
 	~recSweepBus = Bus.audio(s,1); // ?? output for record sweep to track length
-	~strandOutBus = Bus.audio(s, 4); // collective output for processed sound
-	~directOutBus = Bus.audio(s, 4); // collective output for direct line
-	~mainOut = 0; // audio out, 4 channel. need 3 groups. [0..3], [2..5], and [4..7]
+	~strandOutBus = Bus.audio(s, 2); // collective output for processed sound
+	~mainOut = 0; // audio out
 
 	~inputGrp = Group.new; // group for line inputs
 	~trigGrp = Group.after(~inputGrp); // group for any trigger traffic
@@ -82,7 +83,9 @@ s.waitForBoot({
  */
 	~hypha = (
 		type: \composite,
-		play: { |self| },
+		play: { |self|
+			self.strand_syn = Synth(\strand)
+		},
 		new: { |self|
 			(
 				type: \composite,
